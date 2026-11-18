@@ -175,9 +175,9 @@ def generate_launch_description():
         "enable_hand_controller": "true",
         "enable_keyboard_runner": "true",
         # Teleop mapping for our station (upstream: "0.0" and ""): hand translation rotated 180 deg about
-        # world z, wrist pitch (rotation change about world y) inverted.
+        # world z, wrist rotation change about world x and y (roll, pitch) inverted (measured 2026-11-18).
         "coil_yaw_deg": "180.0",
-        "rotation_flip_axes": "pitch",
+        "rotation_flip_axes": "roll,pitch",
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=value) for name, value in defaults.items()],
