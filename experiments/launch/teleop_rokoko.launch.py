@@ -103,6 +103,7 @@ def launch_setup(context, *args, **kwargs):
             {"enable_left": LEFT_SIDE},
             {"enable_right": RIGHT_SIDE},
             {"interactive": False},
+            {"coil_yaw_deg": float(LaunchConfiguration("coil_yaw_deg").perform(context))},
         ],
         output="screen",
     )
@@ -145,6 +146,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "enable_keyboard_runner", default_value="true",
             description="false to run without the keyboard_runner terminal.",
+        ),
+        DeclareLaunchArgument(
+            "coil_yaw_deg", default_value="180.0",
+            description="Rokoko coil heading about world z. 180 for our station (coil turned around); upstream layout is 0.",
         ),
         OpaqueFunction(function=launch_setup),
     ])

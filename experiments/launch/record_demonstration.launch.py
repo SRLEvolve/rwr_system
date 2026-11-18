@@ -136,6 +136,7 @@ def launch_setup(context, *args, **kwargs):
             {"enable_left": LEFT_SIDE},
             {"enable_right": RIGHT_SIDE},
             {"interactive": False},
+            {"coil_yaw_deg": float(LaunchConfiguration("coil_yaw_deg").perform(context))},
         ],
     )
 
@@ -172,6 +173,8 @@ def generate_launch_description():
         "dataset_name": "cube_sorting",
         "enable_hand_controller": "true",
         "enable_keyboard_runner": "true",
+        # Rokoko coil heading about world z: 180 for our station (coil turned around), upstream 0.
+        "coil_yaw_deg": "180.0",
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=value) for name, value in defaults.items()],

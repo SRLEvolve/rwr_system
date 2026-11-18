@@ -24,6 +24,10 @@ class RokokoCoilDemo(Node):
         # interactive=False keeps the node purely service driven: no stdin prompts, so another
         # node (e.g. the HIL policy node) can own the terminal and call pause/resume itself.
         self.declare_parameter("interactive", True)
+        # Heading of the Rokoko coil relative to the robot base, about the world z (up) axis.
+        # 0 = the reference station layout. 180 if teleop is mirrored left/right + forward/back
+        # (and in roll/pitch) while up/down and yaw are correct, i.e. the coil sits turned around.
+        self.declare_parameter("coil_yaw_deg", 0.0)
 
         self.enable_left = self.get_parameter("enable_left").value
         self.enable_right = self.get_parameter("enable_right").value
@@ -48,6 +52,13 @@ class RokokoCoilDemo(Node):
             [0.5, 0.0, 0.0],
             [0.7071, 0.0, 0.0, 0.7071]
         )
+        coil_yaw_deg = float(self.get_parameter("coil_yaw_deg").value)
+        if coil_yaw_deg != 0.0:
+            X_W_yaw = rigid_transform(
+                [0.0, 0.0, 0.0], Rotation.from_euler("z", coil_yaw_deg, degrees=True).as_quat()
+            )
+            self.X_W_bCP = X_W_yaw @ self.X_W_bCP
+            self.get_logger().info(f"Rokoko coil heading rotated by {coil_yaw_deg:.0f} deg about world z")
 
         self.chirality = chirality
 
