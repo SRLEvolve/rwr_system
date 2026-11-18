@@ -153,8 +153,8 @@ def generate_launch_description():
             description="Rotation of the hand translation about world z. 180 for our station; upstream is 0.",
         ),
         DeclareLaunchArgument(
-            "rotation_flip_axes", default_value="y",
-            description="World axes whose wrist-rotation change is inverted. 'y' (pitch) for our station; upstream is ''.",
+            "rotation_flip_axes", default_value="pitch",
+            description="Wrist-rotation components to invert (roll,pitch,yaw). 'pitch' for our station; upstream is 'none'.",
         ),
         OpaqueFunction(function=launch_setup),
     ])

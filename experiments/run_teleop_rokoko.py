@@ -28,9 +28,10 @@ class RokokoCoilDemo(Node):
         # only (wrist rotations are untouched). 0 = upstream behaviour. 180 if the arm moves mirrored in
         # x/y (forward/back + left/right) while up/down and all wrist rotations are correct.
         self.declare_parameter("coil_yaw_deg", 0.0)
-        # World axes ("x", "y", "z", any combination) whose component of the wrist's rotation change is
-        # inverted before it is applied to the arm. "" = upstream behaviour. "y" if bending the wrist up
-        # makes the arm's wrist go down while turning (z) and forearm roll (x) are correct.
+        # Components of the wrist's rotation change (about world axes) to invert before applying it to the
+        # arm: comma-separated "roll" (x), "pitch" (y), "yaw" (z). "" or "none" = upstream behaviour.
+        # "pitch" if bending the wrist up makes the arm's wrist go down while yaw and roll are correct.
+        # (Names, not x/y/z: ROS/YAML would read a bare "y" as the boolean true.)
         self.declare_parameter("rotation_flip_axes", "")
 
         self.enable_left = self.get_parameter("enable_left").value
@@ -58,10 +59,13 @@ class RokokoCoilDemo(Node):
         )
         coil_yaw_deg = float(self.get_parameter("coil_yaw_deg").value)
         self._R_translation_yaw = Rotation.from_euler("z", coil_yaw_deg, degrees=True).as_matrix()
-        flip_axes = str(self.get_parameter("rotation_flip_axes").value).lower()
-        self._rotation_flip = np.array([-1.0 if ax in flip_axes else 1.0 for ax in "xyz"])
+        flip_axes = {t.strip() for t in str(self.get_parameter("rotation_flip_axes").value).lower().split(",")} - {"", "none"}
+        unknown = flip_axes - {"roll", "pitch", "yaw"}
+        if unknown:
+            raise ValueError(f"rotation_flip_axes: unknown {sorted(unknown)}, use roll/pitch/yaw")
+        self._rotation_flip = np.array([-1.0 if n in flip_axes else 1.0 for n in ("roll", "pitch", "yaw")])
         if flip_axes:
-            self.get_logger().info(f"Wrist rotation change inverted about world axes: {flip_axes}")
+            self.get_logger().info(f"Wrist rotation change inverted for: {', '.join(sorted(flip_axes))}")
         if coil_yaw_deg != 0.0:
             self.get_logger().info(f"Hand translation rotated by {coil_yaw_deg:.0f} deg about world z (rotations unchanged)")
 
