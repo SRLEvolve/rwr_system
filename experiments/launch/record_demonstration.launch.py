@@ -137,6 +137,7 @@ def launch_setup(context, *args, **kwargs):
             {"enable_right": RIGHT_SIDE},
             {"interactive": False},
             {"coil_yaw_deg": float(LaunchConfiguration("coil_yaw_deg").perform(context))},
+            {"rotation_flip_axes": LaunchConfiguration("rotation_flip_axes").perform(context)},
         ],
     )
 
@@ -173,8 +174,10 @@ def generate_launch_description():
         "dataset_name": "cube_sorting",
         "enable_hand_controller": "true",
         "enable_keyboard_runner": "true",
-        # Rokoko coil heading about world z: 180 for our station (coil turned around), upstream 0.
+        # Teleop mapping for our station (upstream: "0.0" and ""): hand translation rotated 180 deg about
+        # world z, wrist pitch (rotation change about world y) inverted.
         "coil_yaw_deg": "180.0",
+        "rotation_flip_axes": "y",
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=value) for name, value in defaults.items()],

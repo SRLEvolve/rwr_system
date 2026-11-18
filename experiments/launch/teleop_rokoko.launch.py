@@ -104,6 +104,7 @@ def launch_setup(context, *args, **kwargs):
             {"enable_right": RIGHT_SIDE},
             {"interactive": False},
             {"coil_yaw_deg": float(LaunchConfiguration("coil_yaw_deg").perform(context))},
+            {"rotation_flip_axes": LaunchConfiguration("rotation_flip_axes").perform(context)},
         ],
         output="screen",
     )
@@ -149,7 +150,11 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "coil_yaw_deg", default_value="180.0",
-            description="Rokoko coil heading about world z. 180 for our station (coil turned around); upstream layout is 0.",
+            description="Rotation of the hand translation about world z. 180 for our station; upstream is 0.",
+        ),
+        DeclareLaunchArgument(
+            "rotation_flip_axes", default_value="y",
+            description="World axes whose wrist-rotation change is inverted. 'y' (pitch) for our station; upstream is ''.",
         ),
         OpaqueFunction(function=launch_setup),
     ])

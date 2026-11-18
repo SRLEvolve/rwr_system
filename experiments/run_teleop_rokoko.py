@@ -28,6 +28,10 @@ class RokokoCoilDemo(Node):
         # only (wrist rotations are untouched). 0 = upstream behaviour. 180 if the arm moves mirrored in
         # x/y (forward/back + left/right) while up/down and all wrist rotations are correct.
         self.declare_parameter("coil_yaw_deg", 0.0)
+        # World axes ("x", "y", "z", any combination) whose component of the wrist's rotation change is
+        # inverted before it is applied to the arm. "" = upstream behaviour. "y" if bending the wrist up
+        # makes the arm's wrist go down while turning (z) and forearm roll (x) are correct.
+        self.declare_parameter("rotation_flip_axes", "")
 
         self.enable_left = self.get_parameter("enable_left").value
         self.enable_right = self.get_parameter("enable_right").value
@@ -54,6 +58,10 @@ class RokokoCoilDemo(Node):
         )
         coil_yaw_deg = float(self.get_parameter("coil_yaw_deg").value)
         self._R_translation_yaw = Rotation.from_euler("z", coil_yaw_deg, degrees=True).as_matrix()
+        flip_axes = str(self.get_parameter("rotation_flip_axes").value).lower()
+        self._rotation_flip = np.array([-1.0 if ax in flip_axes else 1.0 for ax in "xyz"])
+        if flip_axes:
+            self.get_logger().info(f"Wrist rotation change inverted about world axes: {flip_axes}")
         if coil_yaw_deg != 0.0:
             self.get_logger().info(f"Hand translation rotated by {coil_yaw_deg:.0f} deg about world z (rotations unchanged)")
 
@@ -219,12 +227,15 @@ class RokokoCoilDemo(Node):
         Xr_W_G[:3,:3] = X_W_G[:3,:3]
 
         Xt_W_fEE_d = self._calc_translation_func(X_W_G)
-        # Compute the target pose for the robot
-        X_W_fEE_d = (
-            Xt_W_fEE_d
-            @ Xr_W_G
-            @ self.Xr_W_G_init_fEE_init
-        )
+        # Compute the target pose for the robot: the glove's rotation change since init (in world frame)
+        # applied to the arm's initial orientation. Same as Xr_W_G @ inv(Xr_W_G_init) @ Xr_W_fEE_init,
+        # with optional per-axis inversion of the change (rotation_flip_axes).
+        dR_W = X_W_G[:3,:3] @ self.Xr_W_G_init[:3,:3].T
+        if np.any(self._rotation_flip < 0):
+            dR_W = Rotation.from_rotvec(Rotation.from_matrix(dR_W).as_rotvec() * self._rotation_flip).as_matrix()
+        Xr_W_fEE_d = np.eye(4)
+        Xr_W_fEE_d[:3,:3] = dR_W @ self.Xr_W_fEE_init[:3,:3]
+        X_W_fEE_d = Xt_W_fEE_d @ Xr_W_fEE_d
 
         return X_W_fEE_d
 
