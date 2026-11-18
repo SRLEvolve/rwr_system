@@ -205,6 +205,9 @@ def process_folder(keys_and_topics, topics_and_types, input_folder, sampling_fre
         resize_to (tuple or None): Target size of the image as a tuple of integers.
         max_parallel (int): Maximum number of files to process in parallel.
     """
+    # A trailing slash would make basename() empty and put the output INSIDE the input folder
+    # ("<dataset>/_processed_..."), so normalize the path first.
+    input_folder = os.path.normpath(input_folder)
     # Get all HDF5 files in the folder
     h5_files = sorted(glob.glob(os.path.join(input_folder, "*.h5")))
     if not h5_files:
