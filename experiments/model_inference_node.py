@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 """
 Usage:
 ros2 topic pub /model_inference_command std_msgs/msg/String "{data: 'stop'}"

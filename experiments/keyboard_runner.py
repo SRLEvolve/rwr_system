@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 from std_srvs.srv import Trigger, SetBool
 from std_msgs.msg import String as ROSString
 import argparse

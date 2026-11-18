@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 
 """
 A ROS2 node that provides a GUI for controlling multiple policy command dimensions via sliders.
