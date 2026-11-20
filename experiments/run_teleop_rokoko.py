@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 
 import numpy as np
 import time
@@ -6,6 +6,7 @@ from copy import deepcopy
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from geometry_msgs.msg import Point, TransformStamped, Vector3, Quaternion, PoseStamped
 from tf2_ros import TransformBroadcaster
 
@@ -13,10 +14,6 @@ from scipy.spatial.transform import Rotation
 from std_srvs.srv import Trigger
 from faive_system.src.common.transformation_utils import rigid_transform, complete_rotation_matrix
 from faive_system.src.common.enums import TeleopState, HandChirality
-
-# Deprecated flags. Can be useful for running the node without launch file (toggle flow and fast mode)
-LEFT_HAND=True
-RIGHT_HAND=True
 
 class RokokoCoilDemo(Node):
     def __init__(self, chirality=HandChirality.RIGHT):
@@ -27,6 +24,15 @@ class RokokoCoilDemo(Node):
         # interactive=False keeps the node purely service driven: no stdin prompts, so another
         # node (e.g. the HIL policy node) can own the terminal and call pause/resume itself.
         self.declare_parameter("interactive", True)
+        # Rotation of the hand's TRANSLATION about the world z (up) axis, applied to the position change
+        # only (wrist rotations are untouched). 0 = upstream behaviour. 180 if the arm moves mirrored in
+        # x/y (forward/back + left/right) while up/down and all wrist rotations are correct.
+        self.declare_parameter("coil_yaw_deg", 0.0)
+        # Components of the wrist's rotation change (about world axes) to invert before applying it to the
+        # arm: comma-separated "roll" (x), "pitch" (y), "yaw" (z). "" or "none" = upstream behaviour.
+        # "pitch" if bending the wrist up makes the arm's wrist go down while yaw and roll are correct.
+        # (Names, not x/y/z: ROS/YAML would read a bare "y" as the boolean true.)
+        self.declare_parameter("rotation_flip_axes", "")
 
         self.enable_left = self.get_parameter("enable_left").value
         self.enable_right = self.get_parameter("enable_right").value
@@ -38,6 +44,7 @@ class RokokoCoilDemo(Node):
             enabled = True
         elif chirality=="right" and self.enable_right:
             enabled = True
+        self.enabled = enabled
         if not enabled:
             return
 
@@ -50,6 +57,17 @@ class RokokoCoilDemo(Node):
             [0.5, 0.0, 0.0],
             [0.7071, 0.0, 0.0, 0.7071]
         )
+        coil_yaw_deg = float(self.get_parameter("coil_yaw_deg").value)
+        self._R_translation_yaw = Rotation.from_euler("z", coil_yaw_deg, degrees=True).as_matrix()
+        flip_axes = {t.strip() for t in str(self.get_parameter("rotation_flip_axes").value).lower().split(",")} - {"", "none"}
+        unknown = flip_axes - {"roll", "pitch", "yaw"}
+        if unknown:
+            raise ValueError(f"rotation_flip_axes: unknown {sorted(unknown)}, use roll/pitch/yaw")
+        self._rotation_flip = np.array([-1.0 if n in flip_axes else 1.0 for n in ("roll", "pitch", "yaw")])
+        if flip_axes:
+            self.get_logger().info(f"Wrist rotation change inverted for: {', '.join(sorted(flip_axes))}")
+        if coil_yaw_deg != 0.0:
+            self.get_logger().info(f"Hand translation rotated by {coil_yaw_deg:.0f} deg about world z (rotations unchanged)")
 
         self.chirality = chirality
 
@@ -213,12 +231,15 @@ class RokokoCoilDemo(Node):
         Xr_W_G[:3,:3] = X_W_G[:3,:3]
 
         Xt_W_fEE_d = self._calc_translation_func(X_W_G)
-        # Compute the target pose for the robot
-        X_W_fEE_d = (
-            Xt_W_fEE_d
-            @ Xr_W_G
-            @ self.Xr_W_G_init_fEE_init
-        )
+        # Compute the target pose for the robot: the glove's rotation change since init (in world frame)
+        # applied to the arm's initial orientation. Same as Xr_W_G @ inv(Xr_W_G_init) @ Xr_W_fEE_init,
+        # with optional per-axis inversion of the change (rotation_flip_axes).
+        dR_W = X_W_G[:3,:3] @ self.Xr_W_G_init[:3,:3].T
+        if np.any(self._rotation_flip < 0):
+            dR_W = Rotation.from_rotvec(Rotation.from_matrix(dR_W).as_rotvec() * self._rotation_flip).as_matrix()
+        Xr_W_fEE_d = np.eye(4)
+        Xr_W_fEE_d[:3,:3] = dR_W @ self.Xr_W_fEE_init[:3,:3]
+        X_W_fEE_d = Xt_W_fEE_d @ Xr_W_fEE_d
 
         return X_W_fEE_d
 
@@ -323,55 +344,68 @@ class RokokoCoilDemo(Node):
             [0,0,0,1]
         )
         Xt_W_G_delta[:3,3] *= self._pos_mapping_scale
+        Xt_W_G_delta[:3,3] = self._R_translation_yaw @ Xt_W_G_delta[:3,3]
         Xt_W_fEE_d =  Xt_W_G_delta @ self.Xt_W_fEE_init
         return Xt_W_fEE_d
 
 
 def main(args=None):
     rclpy.init(args=args)
-    left_rcd = RokokoCoilDemo(chirality=HandChirality.LEFT) if LEFT_HAND else None
-    right_rcd = RokokoCoilDemo(chirality=HandChirality.RIGHT) if RIGHT_HAND else None
+    nodes = [RokokoCoilDemo(chirality=side) for side in HandChirality]
+    active_nodes = []
+    for node in nodes:
+        if node.enabled:
+            active_nodes.append(node)
+        else:
+            node.destroy_node()
+    if not active_nodes:
+        rclpy.shutdown()
+        return
 
     import threading
 
     executor = rclpy.executors.MultiThreadedExecutor()
-    executor.add_node(left_rcd) if LEFT_HAND else None
-    executor.add_node(right_rcd) if RIGHT_HAND else None
+    for node in active_nodes:
+        executor.add_node(node)
 
-    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    def spin():
+        try:
+            executor.spin()
+        except (ExternalShutdownException, KeyboardInterrupt):
+            pass
+
+    spin_thread = threading.Thread(target=spin, daemon=True)
     spin_thread.start()
 
-    while left_rcd and left_rcd.X_W_fEE is None:
-        print("Waiting for left robot pose...")
-        time.sleep(1)
-
-    while right_rcd and right_rcd.X_W_fEE is None:
-        print("Waiting for right robot pose...")
-        time.sleep(1)
-
-    interactive = next((rcd.interactive for rcd in [left_rcd, right_rcd] if rcd is not None), True)
+    interactive = any(node.interactive for node in active_nodes)
     if not interactive:
         # Service driven mode (HIL): the robot is initialized by whoever owns it, and
         # pause/resume come from /franka_teleop/<chirality>/{pause,resume}. Just serve.
         print("Teleop running in non-interactive mode, waiting for pause/resume service calls")
-        spin_thread.join()
-        rclpy.shutdown()
+        try:
+            spin_thread.join()
+        except KeyboardInterrupt:
+            pass
+        executor.shutdown()
+        for node in active_nodes:
+            node.destroy_node()
+        rclpy.try_shutdown()
         return
 
+    for node in active_nodes:
+        while rclpy.ok() and node.X_W_fEE is None:
+            print(f"Waiting for {node.chirality} robot pose...")
+            time.sleep(1)
+
     input("Press enter to move the robot to init pose")
-    result = left_rcd.move2init_callback(Trigger.Request(), Trigger.Response()) if LEFT_HAND else None
-    result = right_rcd.move2init_callback(Trigger.Request(), Trigger.Response()) if RIGHT_HAND else None
+    for node in active_nodes:
+        node.move2init_callback(Trigger.Request(), Trigger.Response())
 
     input("Press enter to calibrate the gloves")
-    X_bCP_lG_init, X_bCP_rG_init = None, None
-
-    for rcd, X_bCP_G_init in zip([left_rcd, right_rcd], [X_bCP_lG_init, X_bCP_rG_init]):
-        if rcd is None:
-            continue
-        while X_bCP_G_init is None:
+    for rcd in active_nodes:
+        while rcd.get_hand_pose() is None:
             print(f"Waiting for {rcd.chirality} glove pose...")
             time.sleep(0.2)
-            X_bCP_G_init = rcd.get_hand_pose()
         result = rcd.resume_callback(Trigger.Request(), Trigger.Response())
 
     keep_running = True
@@ -379,13 +413,11 @@ def main(args=None):
         while keep_running:
             input("Press enter to pause")
 
-            result = left_rcd.pause_callback(Trigger.Request(), Trigger.Response()) if LEFT_HAND else None
-            result = right_rcd.pause_callback(Trigger.Request(), Trigger.Response()) if RIGHT_HAND else None
+            for rcd in active_nodes:
+                rcd.pause_callback(Trigger.Request(), Trigger.Response())
 
             input("Press enter to resume to accurate mode")
-            for rcd in [left_rcd, right_rcd]:
-                if rcd is None:
-                    continue   
+            for rcd in active_nodes:
                 # # use the v joy stick
                 # rcd._calc_translation_func = rcd.calc_translation_VJoyStick
         
@@ -394,29 +426,30 @@ def main(args=None):
                 rcd._calc_translation_func = rcd.calc_translation_ScaledPosMapping 
                 rcd._pos_mapping_scale = 0.6
         
-            result = left_rcd.resume_callback(Trigger.Request(), Trigger.Response()) if LEFT_HAND else None
-            result = right_rcd.resume_callback(Trigger.Request(), Trigger.Response())  if RIGHT_HAND else None
+            for rcd in active_nodes:
+                rcd.resume_callback(Trigger.Request(), Trigger.Response())
 
             input("Press enter to pause")
-            result = left_rcd.pause_callback(Trigger.Request(), Trigger.Response()) if LEFT_HAND else None
-            result = right_rcd.pause_callback(Trigger.Request(), Trigger.Response()) if RIGHT_HAND else None
+            for rcd in active_nodes:
+                rcd.pause_callback(Trigger.Request(), Trigger.Response())
 
             input("Press enter to resume to normal mode")
-            for rcd in [left_rcd, right_rcd]:
-                if rcd is None:
-                    continue   
+            for rcd in active_nodes:
                 rcd._calc_translation_func = rcd.calc_translation_ScaledPosMapping
                 rcd._pos_mapping_scale = 1.0
 
-            result = left_rcd.resume_callback(Trigger.Request(), Trigger.Response()) if LEFT_HAND else None
-            result = right_rcd.resume_callback(Trigger.Request(), Trigger.Response())  if RIGHT_HAND else None
+            for rcd in active_nodes:
+                rcd.resume_callback(Trigger.Request(), Trigger.Response())
 
 
     except KeyboardInterrupt:
         keep_running = False
 
+    executor.shutdown()
     spin_thread.join()
-    rclpy.shutdown()
+    for node in active_nodes:
+        node.destroy_node()
+    rclpy.try_shutdown()
 
 if __name__ == "__main__":
     main()

@@ -64,6 +64,7 @@ def spawn_hand_nodes(hand_chirality, enable_hand_controller=True):
             "retarget/hand_chirality": hand_chirality,
             "retarget/mano_adjustments": mano_adjustments_filepath,
             "retarget/retargeter_cfg": retargeter_cfg_filepath,
+            "enable_at_start": False,
             "robot_description": _orcahand_v2_robot_description(hand_chirality),
         }],
     )
@@ -75,7 +76,7 @@ def launch_setup(context, *args, **kwargs):
     # the ORCA v2 hand is right-handed only (src/hand_control/orca/configs/orcahand_v2/right)
     LEFT_SIDE = False
     RIGHT_SIDE = True
-    TELEOP_ARM = True
+    TELEOP_ARM = LaunchConfiguration("teleop_arm").perform(context).lower() == "true"
 
     enable_hand_controller = LaunchConfiguration("enable_hand_controller").perform(context).lower() == "true"
     enable_keyboard_runner = LaunchConfiguration("enable_keyboard_runner").perform(context).lower() == "true"
@@ -88,7 +89,9 @@ def launch_setup(context, *args, **kwargs):
                 parameters=[
                     {"rokoko_tracker/ip": "0.0.0.0"},
                     {"rokoko_tracker/port": 14043},
-                    {"rokoko_tracker/use_coil": True}
+                    {"rokoko_tracker/use_coil": True},
+                    {"rokoko_tracker/enable_left": LEFT_SIDE},
+                    {"rokoko_tracker/enable_right": RIGHT_SIDE},
                 ],
             )
 
@@ -99,6 +102,9 @@ def launch_setup(context, *args, **kwargs):
         parameters=[
             {"enable_left": LEFT_SIDE},
             {"enable_right": RIGHT_SIDE},
+            {"interactive": False},
+            {"coil_yaw_deg": float(LaunchConfiguration("coil_yaw_deg").perform(context))},
+            {"rotation_flip_axes": LaunchConfiguration("rotation_flip_axes").perform(context)},
         ],
         output="screen",
     )
@@ -121,7 +127,7 @@ def launch_setup(context, *args, **kwargs):
 
     return (
         [rokoko_ingress]
-        + ([keyboard_ctrl] if enable_keyboard_runner else [])
+        + ([keyboard_ctrl] if enable_keyboard_runner and TELEOP_ARM else [])
         + (spawn_hand_nodes("right", enable_hand_controller) if RIGHT_SIDE else [])
         + (spawn_hand_nodes("left", enable_hand_controller) if LEFT_SIDE else [])
         + ([arm_teleop_node] if TELEOP_ARM else [])
@@ -131,12 +137,24 @@ def launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
+            "teleop_arm", default_value="true",
+            description="false for hand-only teleop; use /right/retargeter/set_enabled to start/stop it.",
+        ),
+        DeclareLaunchArgument(
             "enable_hand_controller", default_value="true",
             description="false when the hand controller is already running elsewhere.",
         ),
         DeclareLaunchArgument(
             "enable_keyboard_runner", default_value="true",
             description="false to run without the keyboard_runner terminal.",
+        ),
+        DeclareLaunchArgument(
+            "coil_yaw_deg", default_value="180.0",
+            description="Rotation of the hand translation about world z. 180 for our station; upstream is 0.",
+        ),
+        DeclareLaunchArgument(
+            "rotation_flip_axes", default_value="roll,pitch",
+            description="Wrist-rotation components to invert (roll,pitch,yaw, about world x,y,z). 'roll,pitch' for our station (measured); upstream is 'none'.",
         ),
         OpaqueFunction(function=launch_setup),
     ])
